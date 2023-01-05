@@ -1,0 +1,24 @@
+export module SkipList.Random;
+
+import std;
+
+/**
+ * @brief : uniform_int_distribution random
+ * thread-safe : no
+ */
+export class Random
+{
+public:
+	/**
+	 * @param : [min,max] 
+	 */
+	Random(int min,int max):dis_(min,max),gen_(std::random_device()()) {}
+
+	int Rand()
+	{
+		return dis_(gen_);
+	}
+private:
+	std::uniform_int_distribution<int> dis_;
+	std::mt19937 gen_;
+};

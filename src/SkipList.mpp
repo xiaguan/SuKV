@@ -1,0 +1,207 @@
+export module SkipList;
+
+export import SkipList.Random;
+export import SkipList.Arena;
+
+
+#include <cassert>
+import std;
+
+
+// TODO : Use concept on the cmp
+// TODO : learn lock-free programming
+// TODO : Contains() impl
+export
+template <typename Key,typename Cmp>
+class SkipList
+{
+private:
+	struct Node;
+public:
+
+	SkipList(Cmp cmp,Arena * arena):compare_(cmp),arena_(arena),
+	head_(NewNode(0,MaxHeight)),random_(RandomMin,RandomMax)
+	{
+		for(int i = 0;i<MaxHeight;i++)
+		{
+			head_->SetNext(i, nullptr);
+		}
+	}
+
+	void Insert(const Key& key);
+	bool Contains(const Key& key);
+
+private:
+	static constexpr size_t MaxHeight = 12;
+
+	// random range [min,max]
+	// That means we can get four number 0,1,2,3
+	// so the probability of get 0 is 1/4 what we will use in RandomHeight()
+	static constexpr int RandomMin = 0;
+	static constexpr int RandomMax = 3;
+
+	Node* NewNode(const Key& key, int height);
+
+	bool KeyIsAfterNode(const Key& key, Node* node) const;
+
+	// Return the earliest node that comes at or after key.
+	// Return nullptr if there is no such node.
+	//
+	// If prev is non-null, fills prev[level] with pointer to previous
+	// node at "level" for every level in [0..max_height_-1].
+	/**
+	 * @brief : Return the earliest node that comes at or after key.
+	 *			If prev is non-null, fills prev[level] with pointer to
+	 *			previous node at "level" fro every level in [0..max_height-1]
+	 * @return  : return nullptr if there is no such node
+	 */
+	Node* FindGreaterOrEqual(const Key& key, Node** prev) const;
+
+	bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
+
+	inline int GetMaxHeight() const { return max_height_.load(std::memory_order_relaxed); }
+
+	/**
+	 * @brief : The probability of each height is (1/4)^(n-1) * (3/4)
+	 */
+	int RandomHeight();
+
+
+	Node* const head_;
+	Arena* const arena_;
+	Cmp const compare_;
+	Random random_;
+	std::atomic<int> max_height_;
+};
+
+// Implementation details follow
+template <typename Key, class Comparator>
+struct SkipList<Key, Comparator>::Node
+{
+	Node(const Key& k) :key(k){}
+
+	Key const key;
+
+	Node * Next(int n)
+	{
+		assert(n >= 0);
+		return next_[n].load(std::memory_order_acquire);
+	}
+
+	void* SetNext(int n,Node *x)
+	{
+		assert(n >= 0);
+		next_[n].store(x, std::memory_order_release);
+	}
+
+	Node * NoBarrierNext(int n)
+	{
+		assert(n >= 0);
+		return next_[n].load(std::memory_order_relaxed);
+	}
+
+	void * NoBarrieSetNext(int n,Node * x)
+	{
+		assert(n >= 0);
+		next_[n].store(x, std::memory_order_relaxed);
+	}
+
+
+private:
+	/*
+	 * The Node's multi-level index node impl
+	 * Although it is [1] when declared ,but we will allocate more memory
+	 * to make sure next_[n] is safe (n <= Node's height).
+	 */
+	std::atomic<Node*> next_[1];
+};
+
+
+template <typename Key, typename Cmp>
+typename SkipList<Key, Cmp>::Node* SkipList<Key, Cmp>::NewNode(const Key& key, int height)
+{
+	// compute the memory the new node need, it should be const
+	const size_t alloc_size = sizeof(Node) + sizeof(std::atomic<Node*>) * (height - 1);
+	// the pointer's value (alloc memory) can't be changed
+	char* const node_memory  = arena_->Allocate(alloc_size);
+	// construct the new node on 'node_memory'
+	Node* result = new (node_memory) Node(key);
+	return result;
+}
+
+template <typename Key, typename Cmp>
+bool SkipList<Key, Cmp>::KeyIsAfterNode(const Key& key, Node* n )const
+{
+	return (n != nullptr) && (compare_(n->key, key) < 0);
+}
+
+template <typename Key, typename Cmp>
+typename SkipList<Key, Cmp>::Node* SkipList<Key, Cmp>::FindGreaterOrEqual(const Key& key, Node** prev) const
+{
+	// in fact , x means prev
+	Node* x = head_;
+	int level = GetMaxHeight() - 1;
+	while(true)
+	{
+		Node* next = x->Next(level);
+		if(KeyIsAfterNode(key,next))
+		{
+			// just change the prev ,don;t change the level
+			x = next;
+		}
+		else
+		{
+			// store the new node's prev
+			if (prev != nullptr) prev[level] = x;
+			if(level == 0 )
+			{
+				return x;
+			}
+			// right range, go deeper to find the answer
+			--level;
+		}
+	}
+}
+
+template <typename Key, typename Cmp>
+int SkipList<Key, Cmp>::RandomHeight()
+{
+	int height = 1;
+	while(height < MaxHeight && random_.Rand() == 0)
+	{
+		height++;
+	}
+	assert(height > 0);
+	assert(height <= MaxHeight);
+	return height;
+}
+
+template <typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Insert(const Key& key)
+{
+	Node* prev[MaxHeight];
+	Node* x = FindGreaterOrEqual(key, prev);
+
+	assert(x != nullptr || !Eqaul(key, x->key));
+
+	int height = RandomHeight();
+
+	if(height > GetMaxHeight() )
+	{
+		// the max_height_ should be updated
+		for(int i = GetMaxHeight(); i < height;i++)
+		{
+			prev[i] = head_;
+		}
+		max_height_.store(height, std::memory_order_relaxed);
+	}
+
+	x = NewNode(key, height);
+	for(int i = 0 ;i < height;i++)
+	{
+		// x use no-barrie ,because the fun not return yet, no one knows .
+		x->NoBarrieSetNext(i, prev[i]->NoBarrierNext(i));
+		prev[i]->SetNext(i, x);
+	}
+}
+

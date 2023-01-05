@@ -1,0 +1,48 @@
+export module SkipList.Arena;
+
+import std;
+
+/**
+ * @brief Because of the SkipList frequently allocate memory , and deallocate all the
+ * memory it has once.
+ * thread-safe : only server one SkipList , not thread-safe 
+ */
+export class Arena
+{
+public:
+    Arena() = default;
+
+	Arena(const Arena&) = delete;
+    Arena& operator=(const Arena&) = delete;
+
+    ~Arena();
+
+    /**
+     * @brief  Allocate bytes size memory .
+     */
+    char* Allocate(size_t bytes);
+
+    // TODO : Allocate memory with the normal alignment guarantees provided by malloc.
+    char* AllocateAligned(size_t bytes);
+
+    size_t MemoryUsage() const {
+        return memory_usage_;
+    }
+
+private:
+    char* AllocateFallback(size_t bytes);
+    char* AllocateNewBlock(size_t block_bytes);
+
+    // Allocation state
+    char* alloc_ptr_{ nullptr };
+    size_t alloc_bytes_remaining_{ 0 };
+
+    // 这个vec存储着用于分配的内存块
+    std::vector<char*> blocks_;
+
+    // 该Arena 的总的内存使用情况
+
+    size_t memory_usage_{ 0 };
+};
+
+
