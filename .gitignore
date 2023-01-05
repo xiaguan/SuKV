@@ -1,0 +1,6 @@
+/.vscode
+/.xmake
+/build
+/src1
+/test
+/test.lua
