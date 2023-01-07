@@ -7,10 +7,10 @@ export import SkipList.Arena;
 #include <cassert>
 import std;
 
-
 // TODO : Use concept on the cmp
 // TODO : learn lock-free programming
-// TODO : Contains() impl
+// TODO : write comment for left functions
+// TODO : write test file
 export
 template <typename Key,typename Cmp>
 class SkipList
@@ -19,8 +19,8 @@ private:
 	struct Node;
 public:
 
-	SkipList(Cmp cmp,Arena * arena):compare_(cmp),arena_(arena),
-	head_(NewNode(0,MaxHeight)),random_(RandomMin,RandomMax)
+	SkipList(Cmp cmp,Arena * arena):arena_(arena),head_(NewNode(0,MaxHeight)),
+		compare_(cmp),random_(RandomMin,RandomMax)
 	{
 		for(int i = 0;i<MaxHeight;i++)
 		{
@@ -28,8 +28,69 @@ public:
 		}
 	}
 
+	SkipList(const SkipList&) = delete;
+	SkipList& operator=(const SkipList&) = delete;
+
+	/**
+	 * @param key : nothing compares equal to key is currently in the list
+	 */
 	void Insert(const Key& key);
-	bool Contains(const Key& key);
+
+	/**
+	 * @return : return true if the list contains the key, false for otherwise
+	 */
+	bool Contains(const Key& key) const;
+
+	/**
+	 * @brief : Iteration over the contents of a skip list
+	 * thread-safe : no
+	 */
+	class Iterator
+	{
+	public:
+		/**
+		 * @brief the return iterator is not valid yet
+		 * @param list to init the iterator
+		 */
+		explicit Iterator(const SkipList * list):list_(list) {}
+
+		bool Valid() const { return node_ != nullptr; }
+
+		/**
+		 * @return return the key at the current position
+		 * @breif : Requires Valid() !
+		 */
+		const Key& key() const;
+
+		/**
+		 * @brief : move forward to next position
+		 *			Requires Valid() !
+		 */
+		void Next();
+
+		/**
+		 * @brief : Advances to the previous position
+		 *			Requires Valid() !
+		 */
+		void Prev();
+
+		/**
+		 * @brief : Advance to the first entry with a key >= target
+		 *			Requires Valid() !
+		 */
+		void Seek(const Key& target);
+
+		// Position at the first entry in list.
+		// Final state of iterator is Valid() iff list is not empty.
+		void SeekToFirst();
+
+		// Position at the last entry in list.
+		// Final state of iterator is Valid() iff list is not empty.
+		void SeekToLast();
+	private:
+		const SkipList* list_;
+		Node* node_{nullptr};
+	};
 
 private:
 	static constexpr size_t MaxHeight = 12;
@@ -44,11 +105,6 @@ private:
 
 	bool KeyIsAfterNode(const Key& key, Node* node) const;
 
-	// Return the earliest node that comes at or after key.
-	// Return nullptr if there is no such node.
-	//
-	// If prev is non-null, fills prev[level] with pointer to previous
-	// node at "level" for every level in [0..max_height_-1].
 	/**
 	 * @brief : Return the earliest node that comes at or after key.
 	 *			If prev is non-null, fills prev[level] with pointer to
@@ -56,6 +112,10 @@ private:
 	 * @return  : return nullptr if there is no such node
 	 */
 	Node* FindGreaterOrEqual(const Key& key, Node** prev) const;
+
+	Node* FindLessThan(const Key& key) const;
+
+	Node* FindLast() const;
 
 	bool Equal(const Key& a, const Key& b) const { return (compare_(a, b) == 0); }
 
@@ -66,12 +126,12 @@ private:
 	 */
 	int RandomHeight();
 
-
-	Node* const head_;
+	// arena must construct before head_!
 	Arena* const arena_;
+	Node* const head_;
 	Cmp const compare_;
 	Random random_;
-	std::atomic<int> max_height_;
+	std::atomic<int> max_height_{1};
 };
 
 // Implementation details follow
@@ -88,7 +148,7 @@ struct SkipList<Key, Comparator>::Node
 		return next_[n].load(std::memory_order_acquire);
 	}
 
-	void* SetNext(int n,Node *x)
+	void SetNext(int n,Node *x)
 	{
 		assert(n >= 0);
 		next_[n].store(x, std::memory_order_release);
@@ -100,7 +160,7 @@ struct SkipList<Key, Comparator>::Node
 		return next_[n].load(std::memory_order_relaxed);
 	}
 
-	void * NoBarrieSetNext(int n,Node * x)
+	void  NoBarrieSetNext(int n,Node * x)
 	{
 		assert(n >= 0);
 		next_[n].store(x, std::memory_order_relaxed);
@@ -155,10 +215,53 @@ typename SkipList<Key, Cmp>::Node* SkipList<Key, Cmp>::FindGreaterOrEqual(const 
 			if (prev != nullptr) prev[level] = x;
 			if(level == 0 )
 			{
-				return x;
+				return next;
 			}
 			// right range, go deeper to find the answer
 			--level;
+		}
+	}
+}
+
+template <typename Key, typename Cmp>
+typename SkipList<Key, Cmp>::Node* SkipList<Key, Cmp>::FindLessThan(const Key& key) const
+{
+	Node* x = head_;
+	int level = GetMaxHeight() - 1;
+	while (true) {
+		assert(x == head_ || compare_(x->key, key) < 0);
+		Node* next = x->Next(level);
+		if (next == nullptr || compare_(next->key, key) >= 0) {
+			// key > next->key || next == nullptr means reach the end of the list
+			if (level == 0) {
+				return x;
+			}
+			// Switch to next list
+			--level;
+		}
+		else {
+			x = next;
+		}
+	}
+}
+
+template <typename Key, typename Cmp>
+typename SkipList<Key, Cmp>::Node* SkipList<Key, Cmp>::FindLast() const
+{
+	Node* x = head_;
+	// range at the high level reduce the time
+	int level = GetMaxHeight() - 1;
+	while(true)
+	{
+		Node* next = x->Next(level);
+		if(next == nullptr)
+		{
+			if (level == 0) return x;
+			--level;
+		}
+		else
+		{
+			x = next;
 		}
 	}
 }
@@ -182,14 +285,14 @@ void SkipList<Key, Cmp>::Insert(const Key& key)
 	Node* prev[MaxHeight];
 	Node* x = FindGreaterOrEqual(key, prev);
 
-	assert(x != nullptr || !Eqaul(key, x->key));
+	assert(x == nullptr || !Equal(key, x->key));
 
-	int height = RandomHeight();
+	const int height = RandomHeight();
 
 	if(height > GetMaxHeight() )
 	{
 		// the max_height_ should be updated
-		for(int i = GetMaxHeight(); i < height;i++)
+		for(int i = GetMaxHeight(); i < height;++i)
 		{
 			prev[i] = head_;
 		}
@@ -197,11 +300,70 @@ void SkipList<Key, Cmp>::Insert(const Key& key)
 	}
 
 	x = NewNode(key, height);
-	for(int i = 0 ;i < height;i++)
+	for(int i = 0 ;i < height;++i)
 	{
 		// x use no-barrie ,because the fun not return yet, no one knows .
 		x->NoBarrieSetNext(i, prev[i]->NoBarrierNext(i));
 		prev[i]->SetNext(i, x);
+	}
+}
+
+template <typename Key, typename Cmp>
+bool SkipList<Key, Cmp>::Contains(const Key& key) const
+{
+	Node* find_result = FindGreaterOrEqual(key, nullptr);
+	if(find_result != nullptr && Equal(key,find_result->key))
+	{
+		return true;
+	}
+	return false;
+}
+
+template <typename Key, typename Cmp>
+const Key& SkipList<Key, Cmp>::Iterator::key() const
+{
+	assert(Valid());
+	return node_->key;
+}
+
+template <typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Iterator::Next()
+{
+	assert(Valid());
+	node_ = node_->Next(0);
+}
+
+template <typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Iterator::Prev()
+{
+	assert(Valid());
+	node_ = list_->FindLessThan(node_->key);
+	// head doesn't contain any key
+	if(node_ == list_->head_)
+	{
+		node_ = nullptr;
+	}
+}
+
+template <typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Iterator::Seek(const Key& target)
+{
+	node_ = list_->FindGreaterOrEqual(target,nullptr);
+}
+
+template<typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Iterator::SeekToFirst()
+{
+	node_ = list_->head_->Next(0);
+}
+
+template <typename Key, typename Cmp>
+void SkipList<Key, Cmp>::Iterator::SeekToLast()
+{
+	node_ = list_->FindLast();
+	if(node_ == list_->head_)
+	{
+		node_ = nullptr;
 	}
 }
 
