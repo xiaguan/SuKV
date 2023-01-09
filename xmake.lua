@@ -2,9 +2,8 @@ set_project("SuKV")
 
 add_rules("mode.debug", "mode.release")
 
-set_languages("c++latest")
+set_languages("c++23")
 
-add_requires("gtest")
 
 target("SkipList")
     set_kind("static")
@@ -14,4 +13,3 @@ target("SkipListTest")
     set_kind("binary")
     add_files("test/skiplist_test.cpp")
     add_deps("SkipList")
-    add_packages("gtest")
